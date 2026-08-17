@@ -118,7 +118,7 @@ impl RpcClient {
 
         let parsed: RpcResponse<Value> = match resp.json().await {
             Ok(p) => p,
-            Err(e) => return CallOutcome::Permanent(format!("bad json: {e}")),
+            Err(e) => return CallOutcome::Transient(format!("bad json: {e}")),
         };
 
         if let Some(err) = parsed.error {
