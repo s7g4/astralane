@@ -8,15 +8,15 @@ CREATE TABLE IF NOT EXISTS blocks (
     slot        INTEGER PRIMARY KEY,
     blockhash   TEXT,
     block_time  INTEGER,
-    skipped     INTEGER NOT NULL DEFAULT 0  -- boolean: 0/1
+    skipped     INTEGER NOT NULL DEFAULT 0  -- 0/1
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
     signature    TEXT PRIMARY KEY,
     slot         INTEGER NOT NULL REFERENCES blocks(slot),
-    success      INTEGER NOT NULL,          -- boolean: 0/1
+    success      INTEGER NOT NULL,
     fee          INTEGER NOT NULL,
-    program_ids  TEXT NOT NULL              -- JSON array, stored as TEXT
+    program_ids  TEXT NOT NULL              -- JSON array
 );
 
 CREATE INDEX IF NOT EXISTS idx_transactions_slot
@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_slot
 CREATE TABLE IF NOT EXISTS account_locks (
     signature      TEXT NOT NULL REFERENCES transactions(signature),
     account_pubkey TEXT NOT NULL,
-    is_writable    INTEGER NOT NULL,        -- boolean: 0/1
+    is_writable    INTEGER NOT NULL,
     PRIMARY KEY (signature, account_pubkey)
 );
 
