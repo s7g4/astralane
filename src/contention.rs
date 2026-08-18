@@ -180,11 +180,24 @@ pub struct RangeReport {
 
 // Conflict counting: see ADR-0005 (schedule-derived, not pairwise).
 pub fn build_range_report(conn: &Connection) -> rusqlite::Result<RangeReport> {
+    build_range_report_limited(conn, None)
+}
+
+/// Same as build_range_report, but processes at most `limit` blocks - used
+/// by the Part 5 async-starvation experiment to get a CPU-heavy but
+/// bounded-duration run instead of the full ~11-minute range computation.
+pub fn build_range_report_limited(
+    conn: &Connection,
+    limit: Option<usize>,
+) -> rusqlite::Result<RangeReport> {
     let mut slot_stmt = conn.prepare("SELECT slot FROM blocks WHERE skipped = 0 ORDER BY slot")?;
-    let slots: Vec<i64> = slot_stmt
+    let mut slots: Vec<i64> = slot_stmt
         .query_map([], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
     drop(slot_stmt);
+    if let Some(n) = limit {
+        slots.truncate(n);
+    }
 
     let mut blocks = Vec::new();
     let mut account_counts: HashMap<String, (u64, u64)> = HashMap::new(); // (write, read)

@@ -140,8 +140,50 @@ inference (without instruction decoding) can reliably attribute.
 
 ## API
 
-_TODO — filled in once Part 4 is built._
+Served from the same binary as ingestion (Axum), alongside the static
+dashboard (`dashboard/`, plain HTML/CSS/vanilla JS, candlestick chart
+via a CDN-hosted `lightweight-charts` script tag — no build step).
+
+- `GET /` — the dashboard
+- `GET /api/contention?from=<slot>&to=<slot>` — precomputed contention
+  metrics (schedule depth/width per block filtered to the range, plus
+  range-wide top accounts/programs by conflict count). Precomputed
+  because the underlying scheduling computation takes 11+ minutes over
+  the full range — see FINDINGS.md — so it's built once by
+  `build_contention_summary` into dedicated summary tables, not
+  computed live per request.
+- `GET /api/tokens` — indexed mints with activity counts, sorted so
+  mints with real OHLCV candles come first (most active mints, like
+  wrapped-SOL and USDC, are usually the counter-leg of a trade rather
+  than something with its own candle — see OHLCV model above).
+- `GET /api/ohlcv?mint=<pubkey>&interval=1m|5m` — candles for one token.
+
+`RPC_URL` env var still applies for the ingestion side; the API/dashboard
+work standalone against an already-populated `astralane.db` by setting
+`SKIP_INGESTION=1` (useful for iterating on the dashboard without
+re-running the rate-limited fetch).
+
+`src/bin/starvation_experiment.rs` and the two `/api/experiment/*`
+routes are not part of the required API surface above — they're the
+measurement harness for the Part 5 async-starvation experiment (see
+FINDINGS.md), kept in the repo as evidence rather than thrown away
+after producing the numbers.
 
 ## Load experiment results
 
-_TODO — see FINDINGS.md once Part 5 experiments are run._
+Full methodology and numbers in `FINDINGS.md`. Summary:
+
+- **Backpressure** (policy: block, via bounded `tokio::mpsc` channels):
+  paused the writer 10s mid-ingestion, sampled channel capacity every
+  200ms. The writer's immediate upstream channel visibly filled during
+  the pause; resumed cleanly afterward with identical row counts on a
+  repeat run (idempotent, no duplication).
+- **Async starvation**: the real contention-scheduling computation run
+  naively (inline in an async handler) blocked `/api/tokens` for the
+  entire ~69s computation (1 request got through, in 69.37s). Moved to
+  `spawn_blocking`: 56 requests got through during a comparable
+  computation, averaging 256ms.
+- **Write-path contention**: 478 concurrent API reads sampled during a
+  real 150-slot ingestion run, zero over 500ms and zero lock/busy
+  errors — consistent with WAL allowing concurrent readers without
+  blocking on the writer.

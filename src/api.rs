@@ -17,8 +17,53 @@ pub fn router(state: AppState) -> Router {
         .route("/api/contention", get(get_contention))
         .route("/api/tokens", get(get_tokens))
         .route("/api/ohlcv", get(get_ohlcv))
+        // Part 5 async-starvation experiment only, not part of the required
+        // API surface - runs the contention computation live, one way naive
+        // (blocks the async runtime), one way via spawn_blocking.
+        .route(
+            "/api/experiment/contention-naive",
+            get(get_contention_naive),
+        )
+        .route(
+            "/api/experiment/contention-blocking",
+            get(get_contention_via_spawn_blocking),
+        )
         .nest_service("/", ServeDir::new("dashboard"))
         .with_state(state)
+}
+
+#[derive(Deserialize)]
+struct LimitQuery {
+    limit: Option<usize>,
+}
+
+// Naive: runs the CPU-heavy scheduling computation directly inside the
+// async handler, on whichever tokio worker thread picked up this request.
+// No .await yield point during the computation itself, so that worker
+// thread is unavailable to the runtime for the whole duration.
+async fn get_contention_naive(
+    State(state): State<AppState>,
+    Query(q): Query<LimitQuery>,
+) -> Result<Json<usize>, (StatusCode, String)> {
+    let conn = crate::db::open_read_only(state.db_path.as_str())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let report = crate::contention::build_range_report_limited(&conn, q.limit)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(report.blocks.len()))
+}
+
+async fn get_contention_via_spawn_blocking(
+    State(state): State<AppState>,
+    Query(q): Query<LimitQuery>,
+) -> Result<Json<usize>, (StatusCode, String)> {
+    let db_path = state.db_path.clone();
+    let n = spawn_db(move || -> rusqlite::Result<usize> {
+        let conn = crate::db::open_read_only(db_path.as_str())?;
+        let report = crate::contention::build_range_report_limited(&conn, q.limit)?;
+        Ok(report.blocks.len())
+    })
+    .await?;
+    Ok(Json(n))
 }
 
 async fn spawn_db<F, T>(f: F) -> Result<T, (StatusCode, String)>

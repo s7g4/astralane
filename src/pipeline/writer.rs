@@ -1,11 +1,38 @@
 use crate::pipeline::parser::ParsedBlock;
 use rusqlite::{Connection, params};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Receiver;
 
-pub fn run_blocking(mut parsed_rx: Receiver<ParsedBlock>, mut conn: Connection) {
+/// `pause_after`: (block count, pause duration) - for the Part 5 backpressure
+/// experiment only. After writing that many blocks, sleeps before continuing,
+/// so the bounded channels upstream fill and (per tokio mpsc semantics)
+/// block their senders. Pass None for normal ingestion.
+pub fn run_blocking(
+    mut parsed_rx: Receiver<ParsedBlock>,
+    mut conn: Connection,
+    pause_after: Option<(usize, Duration)>,
+) {
+    let mut written = 0usize;
     while let Some(block) = parsed_rx.blocking_recv() {
         if let Err(e) = write_block(&mut conn, &block) {
             eprintln!("slot {}: write failed: {e}", block.slot);
+        }
+        written += 1;
+
+        if let Some((n, dur)) = pause_after {
+            if written == n {
+                let start = Instant::now();
+                eprintln!(
+                    "[{:?}] writer: pausing for {:?} after {n} blocks",
+                    start, dur
+                );
+                std::thread::sleep(dur);
+                eprintln!(
+                    "[{:?}] writer: resuming after {:?} pause",
+                    Instant::now(),
+                    start.elapsed()
+                );
+            }
         }
     }
 }

@@ -228,3 +228,59 @@ what a later stage will need (owner field, in this case) during
 initial ingestion, not after. Two schema gaps in two parts is a
 pattern, not a coincidence; I'm designing tables around "what does
 Part N need" instead of thinking about the full pipeline up front.
+
+## 2026-08-18/19, part 4 + part 5 — API, dashboard, load experiments
+
+Part 4 went mostly smoothly, but the /api/contention endpoint forced a
+decision I hadn't planned for: the scheduling computation takes 11+
+minutes, so it obviously can't run live per request. Added a
+build_contention_summary tool that precomputes it once into dedicated
+tables, same pattern as the OHLCV candles. Should have seen this
+coming given I already knew the compute time from Part 2, but I didn't
+think about the API implications until I was actually building the
+endpoint.
+
+Two real bugs only showed up once I actually loaded the dashboard in a
+browser instead of just reading the code:
+- Math.max(...bigArray) with 264k elements blew the JS call stack
+  (RangeError). Fixed with reduce().
+- Default token selection landed on wrapped-SOL, which never has
+  candles (it's always the counter-leg). Chart opened empty by
+  default, which looks broken even though it's technically correct
+  given the data. Fixed by sorting tokens-with-candles first.
+
+Also missing a viewport meta tag entirely, which I only noticed
+because the user pointed out mobile wasn't responsive - should have
+caught that myself before hearing about it.
+
+Part 5, given the time crunch, I tried to keep each experiment as
+lean as possible while still being real:
+- Backpressure: paused the writer 10s, watched channel capacity drain
+  in real time. Got a partial result honestly - the writer's direct
+  upstream channel filled visibly, but the bound-4 channel further
+  upstream never saturated in my 30-slot test window, so I didn't
+  observe the full cascade to the fetcher. Reported it as what it is
+  rather than cherry-picking a longer run to hide that.
+- Async starvation: had to build a separate single-worker-thread
+  server for this to actually demonstrate anything, since this dev
+  machine has 12 cores and one blocked thread doesn't visibly starve
+  anything when there are 11 others free. Once I did that, the effect
+  was dramatic and needed no cherry-picking - one blocked request for
+  69 seconds vs. 56 successful ones in a similar window.
+- Write-path contention: got a confusing result at first (idle reads
+  were SLOWER than reads during active writes) and almost reported it
+  as "writes don't slow down reads, even faster!" before realizing the
+  during-write measurements were averaged over a growing table while
+  the idle baseline hit the full, final table size - not a WAL effect
+  at all, just different data volumes. Caught it before writing it
+  down wrong. The actual signal (no lock errors, no latency spikes) is
+  still real, just not the naive average comparison.
+
+What I'd do differently: think about what the API layer needs from
+each computed feature (precomputed vs. live, and roughly how long
+things take) at the point I build that feature, not as a surprise
+later. Same root pattern as the two schema gaps from Parts 2 and 3.
+
+What confused me: the write-path contention numbers, until I stopped
+and actually thought about what data was different between the two
+measurement windows instead of taking the average at face value.
