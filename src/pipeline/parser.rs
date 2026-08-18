@@ -13,6 +13,7 @@ pub struct ParsedBlock {
 
 pub struct ParsedTransaction {
     pub signature: String,
+    pub tx_index: i64,
     pub success: bool,
     pub fee: i64,
     pub program_ids: Vec<String>,
@@ -73,7 +74,8 @@ fn parse_block(slot: u64, block: &Value) -> Option<ParsedBlock> {
         .get("transactions")?
         .as_array()?
         .iter()
-        .filter_map(parse_transaction)
+        .enumerate()
+        .filter_map(|(i, tx)| parse_transaction(i as i64, tx))
         .collect();
 
     Some(ParsedBlock {
@@ -85,7 +87,7 @@ fn parse_block(slot: u64, block: &Value) -> Option<ParsedBlock> {
     })
 }
 
-fn parse_transaction(tx: &Value) -> Option<ParsedTransaction> {
+fn parse_transaction(tx_index: i64, tx: &Value) -> Option<ParsedTransaction> {
     let meta = tx.get("meta")?;
     let message = tx.get("transaction")?.get("message")?;
 
@@ -124,6 +126,7 @@ fn parse_transaction(tx: &Value) -> Option<ParsedTransaction> {
 
     Some(ParsedTransaction {
         signature,
+        tx_index,
         success,
         fee,
         program_ids,

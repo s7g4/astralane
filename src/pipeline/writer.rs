@@ -19,7 +19,7 @@ fn write_block(conn: &mut Connection, block: &ParsedBlock) -> rusqlite::Result<(
     .execute(params![block.slot as i64, block.blockhash, block.block_time, block.skipped])?;
 
     let mut insert_tx = tx.prepare_cached(
-        "INSERT OR IGNORE INTO transactions (signature, slot, success, fee, program_ids) VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT OR IGNORE INTO transactions (signature, slot, tx_index, success, fee, program_ids) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
     )?;
     let mut insert_lock = tx.prepare_cached(
         "INSERT OR IGNORE INTO account_locks (signature, account_pubkey, is_writable) VALUES (?1, ?2, ?3)",
@@ -37,6 +37,7 @@ fn write_block(conn: &mut Connection, block: &ParsedBlock) -> rusqlite::Result<(
         insert_tx.execute(params![
             txn.signature,
             block.slot as i64,
+            txn.tx_index,
             txn.success,
             txn.fee,
             program_ids_json
@@ -77,6 +78,7 @@ mod tests {
             skipped: false,
             transactions: vec![ParsedTransaction {
                 signature: "sig1".to_string(),
+                tx_index: 0,
                 success: true,
                 fee: 5000,
                 program_ids: vec!["Program1".to_string()],

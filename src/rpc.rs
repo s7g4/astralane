@@ -67,10 +67,38 @@ impl RpcClient {
     }
 
     pub async fn get_block(&self, slot: u64) -> BlockFetchOutcome {
+        let params = json!([
+            slot,
+            {
+                "encoding": "jsonParsed",
+                "maxSupportedTransactionVersion": 0,
+                "transactionDetails": "full",
+                "rewards": false
+            }
+        ]);
+        self.get_block_with_params(params).await
+    }
+
+    /// Lighter request: just the ordered signature list for a block, not
+    /// full parsed transaction details. Used to backfill transaction order
+    /// without re-fetching everything.
+    pub async fn get_block_signatures(&self, slot: u64) -> BlockFetchOutcome {
+        let params = json!([
+            slot,
+            {
+                "maxSupportedTransactionVersion": 0,
+                "transactionDetails": "signatures",
+                "rewards": false
+            }
+        ]);
+        self.get_block_with_params(params).await
+    }
+
+    async fn get_block_with_params(&self, params: Value) -> BlockFetchOutcome {
         let mut attempt = 0;
         loop {
             self.limiter.until_ready().await;
-            match self.try_get_block(slot).await {
+            match self.try_get_block(&params).await {
                 CallOutcome::Skipped => return BlockFetchOutcome::Skipped,
                 CallOutcome::Ok(v) => return BlockFetchOutcome::Fetched(v),
                 CallOutcome::Permanent(msg) => return BlockFetchOutcome::Failed(msg),
@@ -87,20 +115,12 @@ impl RpcClient {
         }
     }
 
-    async fn try_get_block(&self, slot: u64) -> CallOutcome {
+    async fn try_get_block(&self, params: &Value) -> CallOutcome {
         let body = RpcRequest {
             jsonrpc: "2.0",
             id: 1,
             method: "getBlock",
-            params: json!([
-                slot,
-                {
-                    "encoding": "jsonParsed",
-                    "maxSupportedTransactionVersion": 0,
-                    "transactionDetails": "full",
-                    "rewards": false
-                }
-            ]),
+            params,
         };
 
         let resp = match self.http.post(&self.url).json(&body).send().await {

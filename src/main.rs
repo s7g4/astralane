@@ -1,9 +1,6 @@
-mod db;
-mod pipeline;
-mod rpc;
-
-use pipeline::{fetcher, parser, slot_walker, writer};
-use rpc::RpcClient;
+use astralane::db;
+use astralane::pipeline::{fetcher, parser, slot_walker, writer};
+use astralane::rpc::RpcClient;
 use std::sync::Arc;
 
 const START_SLOT: u64 = 439865000;
