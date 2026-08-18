@@ -1,6 +1,6 @@
 # ADR-0002: Use the Solana Labs public mainnet-beta RPC endpoint
 
-Status: Accepted
+Status: Superseded by ADR-0004
 
 ## Context
 

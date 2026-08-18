@@ -51,3 +51,79 @@ Next: parser/writer stop being stubs, real INSERT OR IGNORE. Still
 haven't checked ALT resolution against a real v0 tx. Skipped-slot
 detection is a string match on the error message and untested against
 an actual skipped slot — probably wrong, need to find one and check.
+
+## 2026-08-18
+
+Verified v0/ALT resolution against real data before writing the
+parser: pulled a real v0 tx using a lookup table, accountKeys came
+back with 33 entries (19 direct + 14 from the lookup table), all with
+writable/signer populated the same way regardless of source. So
+account_locks extraction doesn't need to special-case lookup-table
+accounts.
+
+Wrote real parser.rs — extracts blocks/transactions/account_locks/
+token_balances out of the raw block JSON into proper structs instead
+of passing the Value through. Two things I had to just decide and
+write down rather than look up: Failed slots don't get a blocks row
+(we don't actually know what happened there, unlike a real skip), and
+program_ids only counts top-level instructions, not inner/CPI ones.
+
+Wrote real writer.rs. rusqlite is sync, so it runs on spawn_blocking
+instead of a normal async task — otherwise its blocking DB calls would
+stall whatever tokio worker thread picked it up. One SQLite transaction
+per block. Automated idempotency test (write the same block twice,
+assert row counts don't move) passes, plus manually double-ran 10 real
+slots earlier and got identical counts both times.
+
+Tried the full 1,000-slot run. It crashed the whole machine partway
+through.
+
+After reboot: /tmp got wiped so no log survived, but the DB didn't —
+WAL mode meant the 125 blocks that had committed were intact
+(integrity_check: ok), everything after just didn't happen. Actual
+cause, best I can tell: writer.rs was calling tx.execute() fresh for
+every single row with no statement caching — tens of thousands of
+un-cached prepares per block. That made the writer the bottleneck,
+which meant the bounded channel between fetcher and parser (which
+carries the raw, unparsed block JSON, sometimes 20+MB) filled up and
+stayed full, so large blocks piled up in memory waiting for a slow
+writer to catch up.
+
+Fixed with prepare_cached (statements compiled once, reused across
+every row and every block) and a separate, much smaller bound
+specifically on that one channel. Reran a 200-slot test with active
+memory logging this time — memory grew ~1GB and plateaued instead of
+climbing, then dropped back down after the process exited. Much
+healthier profile.
+
+Then hit a second problem on the same 200-slot test: 180/200 slots
+failed with 429 Too Many Requests, despite our own limiter correctly
+holding to 10 req/s. Pretty sure this is cumulative — a lot of
+requests against the public endpoint over the course of the day
+(curl checks, several smoke tests, the crashed run) probably tripped
+its own undocumented throttling. ADR-0002 called this out as a risk
+going in, so switched to Helius (ADR-0004, supersedes ADR-0002).
+Had to change RPC_URL from a hardcoded const to an env var, since it
+now carries an API key that can't go in a committed file.
+
+Reran the full 1,000-slot range on Helius with memory monitoring
+running the whole time. Checked in on it periodically — memory
+climbed higher than the 200-slot test (up to ~12.5GB used) but
+plateaued rather than climbing indefinitely, so let it keep running
+instead of killing it. Finished clean: 1000/1000 blocks, 0 skipped,
+0 failed, no gaps, integrity_check ok. ~1.76M transactions, ~35M
+account_locks, ~4M token_balances, 15GB on disk.
+
+What I'd do differently: should have caught the missing statement
+caching before running at scale, not after a crash — it's the kind of
+thing that's obvious in hindsight once you know 38k rows/block times
+1000 blocks is tens of millions of individual un-cached prepares.
+Also should have anticipated the public RPC's cumulative throttling
+sooner given ADR-0002 already named it as a risk — didn't take that
+risk seriously enough until it actually happened.
+
+What confused me: the first crash gave no real signal beforehand —
+no warning, no gradual slowdown I noticed, just gone. Only in
+hindsight, watching memory during the retry, was it obvious there
+was a real upward trend the first time too, I just wasn't watching
+for it.

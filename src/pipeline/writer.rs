@@ -13,44 +13,54 @@ pub fn run_blocking(mut parsed_rx: Receiver<ParsedBlock>, mut conn: Connection) 
 fn write_block(conn: &mut Connection, block: &ParsedBlock) -> rusqlite::Result<()> {
     let tx = conn.transaction()?;
 
-    tx.execute(
+    tx.prepare_cached(
         "INSERT OR IGNORE INTO blocks (slot, blockhash, block_time, skipped) VALUES (?1, ?2, ?3, ?4)",
-        params![block.slot as i64, block.blockhash, block.block_time, block.skipped],
+    )?
+    .execute(params![block.slot as i64, block.blockhash, block.block_time, block.skipped])?;
+
+    let mut insert_tx = tx.prepare_cached(
+        "INSERT OR IGNORE INTO transactions (signature, slot, success, fee, program_ids) VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+    let mut insert_lock = tx.prepare_cached(
+        "INSERT OR IGNORE INTO account_locks (signature, account_pubkey, is_writable) VALUES (?1, ?2, ?3)",
+    )?;
+    let mut insert_balance = tx.prepare_cached(
+        "INSERT OR IGNORE INTO token_balances
+         (signature, account_index, mint, pre_amount, post_amount, decimals)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
     )?;
 
     for txn in &block.transactions {
         let program_ids_json =
             serde_json::to_string(&txn.program_ids).unwrap_or_else(|_| "[]".to_string());
 
-        tx.execute(
-            "INSERT OR IGNORE INTO transactions (signature, slot, success, fee, program_ids) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![txn.signature, block.slot as i64, txn.success, txn.fee, program_ids_json],
-        )?;
+        insert_tx.execute(params![
+            txn.signature,
+            block.slot as i64,
+            txn.success,
+            txn.fee,
+            program_ids_json
+        ])?;
 
         for lock in &txn.account_locks {
-            tx.execute(
-                "INSERT OR IGNORE INTO account_locks (signature, account_pubkey, is_writable) VALUES (?1, ?2, ?3)",
-                params![txn.signature, lock.account_pubkey, lock.is_writable],
-            )?;
+            insert_lock.execute(params![txn.signature, lock.account_pubkey, lock.is_writable])?;
         }
 
         for bal in &txn.token_balances {
-            tx.execute(
-                "INSERT OR IGNORE INTO token_balances
-                 (signature, account_index, mint, pre_amount, post_amount, decimals)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    txn.signature,
-                    bal.account_index,
-                    bal.mint,
-                    bal.pre_amount,
-                    bal.post_amount,
-                    bal.decimals
-                ],
-            )?;
+            insert_balance.execute(params![
+                txn.signature,
+                bal.account_index,
+                bal.mint,
+                bal.pre_amount,
+                bal.post_amount,
+                bal.decimals
+            ])?;
         }
     }
 
+    drop(insert_tx);
+    drop(insert_lock);
+    drop(insert_balance);
     tx.commit()
 }
 
