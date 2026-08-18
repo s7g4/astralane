@@ -1,3 +1,4 @@
+pub mod api;
 pub mod contention;
 pub mod db;
 pub mod ohlcv;

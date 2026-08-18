@@ -252,6 +252,48 @@ pub fn build_range_report(conn: &Connection) -> rusqlite::Result<RangeReport> {
     })
 }
 
+pub fn store_range_report(conn: &mut Connection, report: &RangeReport) -> rusqlite::Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM contention_blocks", [])?;
+    tx.execute("DELETE FROM contention_accounts", [])?;
+    tx.execute("DELETE FROM contention_programs", [])?;
+
+    let mut insert_block = tx.prepare_cached(
+        "INSERT INTO contention_blocks (slot, schedule_depth, step_widths) VALUES (?1, ?2, ?3)",
+    )?;
+    for b in &report.blocks {
+        let widths_json = serde_json::to_string(&b.step_widths).unwrap_or_else(|_| "[]".into());
+        insert_block.execute(params![b.slot, b.schedule_depth as i64, widths_json])?;
+    }
+    drop(insert_block);
+
+    let mut insert_account = tx.prepare_cached(
+        "INSERT INTO contention_accounts (account_pubkey, write_conflicts, read_conflicts) VALUES (?1, ?2, ?3)",
+    )?;
+    for a in &report.accounts {
+        insert_account.execute(params![
+            a.account_pubkey,
+            a.write_conflicts as i64,
+            a.read_conflicts as i64
+        ])?;
+    }
+    drop(insert_account);
+
+    let mut insert_program = tx.prepare_cached(
+        "INSERT INTO contention_programs (program_id, write_conflicts, read_conflicts) VALUES (?1, ?2, ?3)",
+    )?;
+    for p in &report.programs {
+        insert_program.execute(params![
+            p.program_id,
+            p.write_conflicts as i64,
+            p.read_conflicts as i64
+        ])?;
+    }
+    drop(insert_program);
+
+    tx.commit()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

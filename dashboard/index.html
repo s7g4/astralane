@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>astralane</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <header>
+    <h1>astralane</h1>
+    <p>Solana 1,000-slot ingest &mdash; contention &amp; OHLCV</p>
+  </header>
+
+  <main>
+    <section id="ohlcv-section">
+      <h2>OHLCV</h2>
+      <div class="controls">
+        <label for="mint-select">Token</label>
+        <select id="mint-select"></select>
+        <label for="interval-select">Interval</label>
+        <select id="interval-select">
+          <option value="1m">1m</option>
+          <option value="5m">5m</option>
+        </select>
+      </div>
+      <div id="chart"></div>
+      <p id="ohlcv-empty" class="empty hidden">No candles for this token/interval.</p>
+    </section>
+
+    <section id="contention-section">
+      <h2>Contention</h2>
+      <div id="contention-summary" class="summary"></div>
+
+      <h3>Top accounts by conflict count</h3>
+      <div class="table-scroll">
+        <table id="accounts-table">
+          <thead><tr><th>Account</th><th>Write conflicts</th><th>Read conflicts</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <h3>Top programs by conflict count</h3>
+      <div class="table-scroll">
+        <table id="programs-table">
+          <thead><tr><th>Program</th><th>Write conflicts</th><th>Read conflicts</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
