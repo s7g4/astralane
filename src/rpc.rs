@@ -79,9 +79,8 @@ impl RpcClient {
         self.get_block_with_params(params).await
     }
 
-    /// Lighter request: just the ordered signature list for a block, not
-    /// full parsed transaction details. Used to backfill transaction order
-    /// without re-fetching everything.
+    // Lighter than get_block: just ordered signatures, no parsed tx data.
+    // Used for the tx_index backfill (ADR-0007).
     pub async fn get_block_signatures(&self, slot: u64) -> BlockFetchOutcome {
         let params = json!([
             slot,

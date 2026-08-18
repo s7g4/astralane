@@ -127,3 +127,51 @@ no warning, no gradual slowdown I noticed, just gone. Only in
 hindsight, watching memory during the retry, was it obvious there
 was a real upward trend the first time too, I just wasn't watching
 for it.
+
+## 2026-08-18, part 2 — Contention
+
+Started Part 2 and immediately hit a gap: the greedy scheduler needs
+each transaction's original position within its block, and the schema
+never captured that — signature/slot alone give no ordering. Had to
+add a tx_index column and backfill the already-ingested range rather
+than redo the whole ingestion (getBlock with transactionDetails:
+signatures instead of full jsonParsed — same 1000 requests, much
+smaller payloads, few minutes instead of ~an hour).
+
+Building the backfill tool needed the same RpcClient as main.rs, which
+meant restructuring into a lib crate + multiple binaries (astralane,
+backfill_order, contention_report) instead of duplicating the
+rate-limited RPC logic. More structural churn than I expected for what
+started as "add one column."
+
+Implemented the greedy scheduler itself: track two sets per step
+(written accounts, touched accounts overall), a lock conflicts with a
+step if it wants to write something already touched, or read something
+already written. Wrote the three required synthetic tests
+(read-read/write-write/read-write) before touching real data, all
+passed first try — the harder part was deciding what actually counts
+as "one conflict" for the reporting, since the spec doesn't define it.
+Went with counting each rejected placement attempt during scheduling,
+tied directly to the schedule being reported rather than a separate
+pairwise count.
+
+Ran it for real against all 1000 blocks: took over 11 minutes. Not
+surprised given the scheduler's complexity (checking every transaction
+against every existing step's lock sets), but it's a good forcing
+function — confirms the contention computation really is the
+CPU-heavy thing Part 5 wants tested under spawn_blocking, and also
+means /api/contention can't compute this live per request later, has
+to serve something precomputed.
+
+One artifact in the real numbers worth remembering for FINDINGS:
+ComputeBudget and the System Program dominate the "most contentious
+programs" ranking, but that's mostly because they're present in nearly
+every transaction (compute budget instructions are almost universal
+now), not because they're actually the programs causing the most real
+contention. The account-level ranking is more meaningful than the
+program-level one for that reason.
+
+What I'd do differently: should have thought about what data the
+scheduling algorithm actually needs as input before finalizing the
+Part 1 schema, not after a full ingestion was already done. Order
+within a block is an obvious requirement in hindsight.

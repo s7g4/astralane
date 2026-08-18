@@ -15,8 +15,7 @@ pub struct Transaction {
     pub locks: Vec<AccountLock>,
 }
 
-/// One instance of a transaction being rejected from a step due to a
-/// specific conflicting account lock.
+/// One rejection: a transaction couldn't go in a step because of this lock.
 #[derive(Clone, Debug)]
 pub struct ConflictEvent {
     pub account_pubkey: String,
@@ -44,8 +43,6 @@ impl StepState {
         }
     }
 
-    /// Returns the subset of `locks` that conflict with what's already
-    /// placed in this step. Empty means the whole transaction can go here.
     fn conflicting_locks<'a>(&self, locks: &'a [AccountLock]) -> Vec<&'a AccountLock> {
         locks
             .iter()
@@ -70,11 +67,8 @@ impl StepState {
     }
 }
 
-/// Greedy list-scheduling: transactions are processed in the order given
-/// (caller must pass them in tx_index order), and each is placed in the
-/// earliest step where none of its account locks conflict with anything
-/// already assigned to that step. This is a heuristic approximation, not
-/// the validator's real schedule.
+/// Heuristic, not the validator's real schedule. Callers must pass
+/// transactions in tx_index order.
 pub fn schedule_block(transactions: &[Transaction]) -> Schedule {
     let mut steps: Vec<StepState> = Vec::new();
     let mut conflicts = Vec::new();
@@ -113,10 +107,6 @@ pub fn schedule_block(transactions: &[Transaction]) -> Schedule {
     }
 }
 
-/// Loads all transactions + their account locks for one block, ordered by
-/// tx_index (required for the greedy scheduler to process in original
-/// order). Two queries per block (transactions, then a join for locks)
-/// rather than one query per transaction.
 pub fn load_block_transactions(conn: &Connection, slot: i64) -> rusqlite::Result<Vec<Transaction>> {
     let mut tx_stmt = conn.prepare_cached(
         "SELECT signature, tx_index, program_ids FROM transactions WHERE slot = ?1 ORDER BY tx_index",
@@ -188,11 +178,7 @@ pub struct RangeReport {
     pub programs: Vec<ProgramConflictCount>, // sorted by total conflicts, descending
 }
 
-/// Runs the greedy scheduler over every non-skipped block in the DB and
-/// aggregates conflict counts by account and by program, read/write
-/// separated. Conflict counting follows the schedule-derived definition:
-/// one conflict per (transaction, account) rejection during scheduling,
-/// not an independent pairwise count over all transactions in a block.
+// Conflict counting: see ADR-0005 (schedule-derived, not pairwise).
 pub fn build_range_report(conn: &Connection) -> rusqlite::Result<RangeReport> {
     let mut slot_stmt = conn.prepare("SELECT slot FROM blocks WHERE skipped = 0 ORDER BY slot")?;
     let slots: Vec<i64> = slot_stmt
