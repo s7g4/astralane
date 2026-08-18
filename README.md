@@ -91,7 +91,52 @@ manual `getAddressLookupTable` fallback is needed.
 
 ## OHLCV model
 
-_TODO — filled in once Part 3 is built._
+**Price inference**: for each transaction, sum token balance deltas
+per mint (across however many accounts of that mint appear in the
+transaction). If exactly one non-WSOL mint has a nonzero net delta,
+and wrapped-SOL (`So11111111111111111111111111111111111111112`) also
+has a nonzero net delta in the opposite direction, treat it as a trade:
+`price = |SOL delta| / |token delta|` (SOL per token).
+
+**Volume**: base-token amount moved (not SOL-denominated) — the same
+delta already used for price, decimal-adjusted.
+
+**Candles**: matched trades bucketed by `block_time` into 1-minute and
+5-minute windows (`bucket_start = block_time - block_time % interval`),
+standard first/max/min/last/sum aggregation.
+
+**Exclusions** (see ADR-0008 for full reasoning):
+- **Native SOL legs**: not captured during ingestion (only wrapped-SOL
+  token balances were). Price inference is wrapped-SOL-only; native
+  lamport-denominated legs are untracked.
+- **Multi-hop routes**: more than one non-WSOL mint touched in the same
+  transaction — excluded, no reliable way to attribute price across a
+  route without instruction decoding.
+- **SOL wrap/unwrap only**: zero non-WSOL mints touched — not a trade.
+- **Internal routing that nets to zero**: the same mint appearing
+  across multiple accounts in one transaction with deltas that cancel
+  out — real WSOL movement, no net token change. This turned out to be
+  the dominant case in the real data (see below).
+- **Liquidity add/remove**: not explicitly detected (would need
+  instruction decoding, out of scope), but requiring opposing-sign
+  deltas incidentally rejects simple two-sided liquidity operations
+  where both legs move the same direction.
+- **Tokens with no SOL pair**: never produce a WSOL-paired group —
+  untracked, not an error.
+- **Dust**: WSOL-side amount below 0.0001 SOL excluded.
+- **Round-number token amounts** (exact multiples of 1,000,000 units):
+  treated as token-creation/mint events (e.g. pump.fun's standard 1B
+  initial supply) co-occurring with an incidental SOL fee, not trades.
+
+**Real yield is low, and that's a genuine finding, not a bug**: on the
+full 1,000-slot range, only 66 candles (1m+5m combined) across 27
+distinct mints were produced. Of 211,584 transactions that touch both
+a WSOL leg and exactly one other mint, 211,390 (99.9%) net to zero
+token change despite real WSOL movement — internal multi-account
+routing, not simple two-leg swaps. Clean, directly-matchable WSOL/token
+swaps are genuinely rare in real Solana transaction patterns; most
+volume goes through more complex routing than balance-delta-only
+inference (without instruction decoding) can reliably attribute.
 
 ## API
 

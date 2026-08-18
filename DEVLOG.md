@@ -175,3 +175,56 @@ What I'd do differently: should have thought about what data the
 scheduling algorithm actually needs as input before finalizing the
 Part 1 schema, not after a full ingestion was already done. Order
 within a block is an obvious requirement in hindsight.
+
+## 2026-08-18, part 3 — OHLCV
+
+Another schema gap right away: price inference needs an "opposing SOL
+or wrapped-SOL balance change," but native SOL (preBalances/
+postBalances) was never captured, only token balances. Recovering it
+would mean a full re-fetch of every block, same cost as the original
+ingestion — decided to scope to wrapped-SOL only and document native
+SOL as untracked (ADR-0008), rather than pay for another hour-long
+re-ingest.
+
+Wrote the matching logic (net delta per mint per tx, require exactly
+one non-WSOL mint + opposing WSOL delta, dust floor at 0.0001 SOL) and
+candle aggregation, tests passed first try — but ran it against the
+real data and got only 68 candles total across all 1000 slots. Way
+lower than expected, assumed a bug at first.
+
+Traced it with raw SQL, independent of my Rust code, to make sure it
+wasn't just a code bug: 211,584 transactions touch both a WSOL leg and
+exactly one other mint, but 211,390 of them (99.9%) net to exactly
+zero token change when you sum deltas across all of that mint's
+accounts in the tx — real SOL movement, no net token change. Pulled
+one specific example: same token mint at two different accounts,
++94,739,442 and -94,739,442, exactly cancelling. That's not noise,
+that's some internal routing/vault step netting out while the actual
+trade (if there is one) isn't visible from these two rows alone.
+
+Checked the 194 that do net to nonzero too, since I didn't want to
+just assume those were all real trades either. Several were exact
+round numbers like 1,000,000,000 — pump.fun's standard 1B token supply
+on creation, with a small SOL fee attached. Not trades, mint events.
+Added a filter for exact multiples of 1,000,000 units and re-ran: 66
+real candles, 27 distinct mints.
+
+Had to decide whether to keep digging (tracking per-owner deltas
+instead of per-mint, which needs the owner field we never captured
+either — another schema+backfill cycle) or just accept and document
+the low yield honestly. Went with documenting it, given the time left
+today. Wrote up the whole investigation in the README rather than just
+quietly reporting the small number — felt important that this reads
+as a real, checked finding, not an unexplained gap.
+
+What confused me: my first instinct when I saw "68 candles" was that
+I'd broken something, and I almost started rewriting the matching
+logic before checking the raw data first. Glad I checked with plain
+SQL before touching the code again — the numbers were telling me
+something true about the data, not something wrong with my query.
+
+What I'd do differently: same lesson as Part 2 honestly — capture
+what a later stage will need (owner field, in this case) during
+initial ingestion, not after. Two schema gaps in two parts is a
+pattern, not a coincidence; I'm designing tables around "what does
+Part N need" instead of thinking about the full pipeline up front.
