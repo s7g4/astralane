@@ -135,6 +135,69 @@ fn parse_transaction(tx_index: i64, tx: &Value) -> Option<ParsedTransaction> {
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // Mirrors the real shape seen from a live v0 transaction (slot 439865010,
+    // signature 3jRBii2q...): jsonParsed + maxSupportedTransactionVersion=0
+    // resolves lookup-table accounts directly into accountKeys, each with the
+    // same pubkey/signer/writable fields as directly-included ones, just
+    // source: "lookupTable" instead of "transaction". Our extraction doesn't
+    // read `source` at all - this test proves that's fine, not an oversight,
+    // by asserting lookup-table accounts come through with correct locks.
+    fn v0_tx_with_alt_accounts() -> serde_json::Value {
+        json!({
+            "meta": {
+                "err": null,
+                "fee": 5000,
+                "preTokenBalances": [],
+                "postTokenBalances": []
+            },
+            "transaction": {
+                "signatures": ["sig_v0_alt_test"],
+                "message": {
+                    "accountKeys": [
+                        {"pubkey": "DirectSigner", "signer": true, "source": "transaction", "writable": true},
+                        {"pubkey": "DirectReadonly", "signer": false, "source": "transaction", "writable": false},
+                        {"pubkey": "LookupWritable", "signer": false, "source": "lookupTable", "writable": true},
+                        {"pubkey": "LookupReadonly", "signer": false, "source": "lookupTable", "writable": false}
+                    ],
+                    "instructions": [
+                        {"programId": "SomeProgram1111111111111111111111111111"}
+                    ]
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn v0_lookup_table_accounts_resolved_into_locks() {
+        let tx = v0_tx_with_alt_accounts();
+        let parsed = parse_transaction(0, &tx).expect("should parse");
+
+        assert_eq!(parsed.signature, "sig_v0_alt_test");
+        assert_eq!(parsed.account_locks.len(), 4);
+
+        let find = |pubkey: &str| {
+            parsed
+                .account_locks
+                .iter()
+                .find(|l| l.account_pubkey == pubkey)
+                .unwrap_or_else(|| panic!("missing lock for {pubkey}"))
+        };
+
+        // directly-included accounts
+        assert!(find("DirectSigner").is_writable);
+        assert!(!find("DirectReadonly").is_writable);
+
+        // lookup-table-resolved accounts - same extraction, no special-casing
+        assert!(find("LookupWritable").is_writable);
+        assert!(!find("LookupReadonly").is_writable);
+    }
+}
+
 struct BalanceEntry {
     mint: String,
     amount: String,

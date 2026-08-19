@@ -140,17 +140,82 @@ impl RpcClient {
             Err(e) => return CallOutcome::Transient(format!("bad json: {e}")),
         };
 
-        if let Some(err) = parsed.error {
-            if err.message.to_lowercase().contains("skipped") {
-                return CallOutcome::Skipped;
-            }
-            return CallOutcome::Transient(err.message);
-        }
+        classify_response(parsed)
+    }
+}
 
-        match parsed.result {
-            Some(v) => CallOutcome::Ok(v),
-            None => CallOutcome::Skipped,
+// Split out from try_get_block so skip-detection can be unit tested against
+// the real documented Solana error format without live network I/O.
+fn classify_response(parsed: RpcResponse<Value>) -> CallOutcome {
+    if let Some(err) = parsed.error {
+        if err.message.to_lowercase().contains("skipped") {
+            return CallOutcome::Skipped;
         }
+        return CallOutcome::Transient(err.message);
+    }
+
+    match parsed.result {
+        Some(v) => CallOutcome::Ok(v),
+        None => CallOutcome::Skipped,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Real documented Solana JSON-RPC error for a skipped/missing slot -
+    // this exact wording (and the "-32007" family of codes) is what
+    // getBlock returns for a slot that was never produced, distinct from a
+    // slot that's simply not yet finalized or genuinely errored.
+    #[test]
+    fn skipped_slot_error_message_classified_as_skipped() {
+        let response: RpcResponse<Value> = RpcResponse {
+            result: None,
+            error: Some(RpcError {
+                code: -32007,
+                message: "Slot 123456789 was skipped, or missing in long-term storage"
+                    .to_string(),
+            }),
+        };
+
+        assert!(matches!(classify_response(response), CallOutcome::Skipped));
+    }
+
+    #[test]
+    fn null_result_no_error_also_classified_as_skipped() {
+        let response: RpcResponse<Value> = RpcResponse {
+            result: None,
+            error: None,
+        };
+
+        assert!(matches!(classify_response(response), CallOutcome::Skipped));
+    }
+
+    #[test]
+    fn real_block_result_classified_as_ok() {
+        let response: RpcResponse<Value> = RpcResponse {
+            result: Some(serde_json::json!({"blockhash": "abc"})),
+            error: None,
+        };
+
+        assert!(matches!(classify_response(response), CallOutcome::Ok(_)));
+    }
+
+    #[test]
+    fn other_rpc_error_classified_as_transient_not_skipped() {
+        let response: RpcResponse<Value> = RpcResponse {
+            result: None,
+            error: Some(RpcError {
+                code: -32602,
+                message: "Invalid params: slot out of range".to_string(),
+            }),
+        };
+
+        assert!(matches!(
+            classify_response(response),
+            CallOutcome::Transient(_)
+        ));
     }
 }
 

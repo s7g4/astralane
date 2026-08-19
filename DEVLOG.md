@@ -29,6 +29,7 @@ JoinSet so it actually waits on in-flight fetches before returning
 instead of leaking them.
 
 Bugs:
+
 - `edition = "2026"` in Cargo.toml, not a real edition, wouldn't even
   parse. Typo for 2024.
 - schema file was named `init.spl` not `.sql`. Didn't error because
@@ -242,6 +243,7 @@ endpoint.
 
 Two real bugs only showed up once I actually loaded the dashboard in a
 browser instead of just reading the code:
+
 - Math.max(...bigArray) with 264k elements blew the JS call stack
   (RangeError). Fixed with reduce().
 - Default token selection landed on wrapped-SOL, which never has
@@ -255,6 +257,7 @@ caught that myself before hearing about it.
 
 Part 5, given the time crunch, I tried to keep each experiment as
 lean as possible while still being real:
+
 - Backpressure: paused the writer 10s, watched channel capacity drain
   in real time. Got a partial result honestly - the writer's direct
   upstream channel filled visibly, but the bound-4 channel further
@@ -284,3 +287,30 @@ later. Same root pattern as the two schema gaps from Parts 2 and 3.
 What confused me: the write-path contention numbers, until I stopped
 and actually thought about what data was different between the two
 measurement windows instead of taking the average at face value.
+
+## 2026-08-19 — closing gaps
+
+Went back to close two things flagged gaps:
+no automated test for v0/ALT account resolution, and skip detection
+never verified against a real skipped slot.
+
+v0/ALT: straightforward, wrote a synthetic fixture matching the real
+accountKeys shape we already verified manually back in Part 1 (mixed
+source: "transaction" / source: "lookupTable" entries), asserted
+account_locks extraction treats them identically. Should have written
+this at the time instead of just eyeballing the manual verification
+and moving on - the manual check proved the RPC resolves ALTs
+correctly, but never proved our own extraction code does the right
+thing with that data going forward.
+
+Skip detection was harder. Tried to find a real skipped slot by
+scanning ~480 real mainnet slots (sequential, then parallel with
+xargs) and found zero - consistent with Solana's skip rate being
+genuinely low right now, but I couldn't prove that vs. some scanning
+bug without spending a lot more time on it than I had. Pivoted:
+extracted the skip-classification logic out of try_get_block into a
+pure function and unit tested it against the actual documented Solana
+RPC error format for skipped slots, not a live one. Real error format,
+fake network call - not as strong as catching a live skip, but
+genuinely tests the logic that matters instead of leaving it
+completely unverified.
